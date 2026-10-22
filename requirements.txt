@@ -1,0 +1,21 @@
+# Verified against the environment these entry points are developed in:
+#   python 3.9.23, torch 1.13.1 (cu117), torchvision 0.14.1
+# Install torch/torchvision for your CUDA version first, then:
+#   pip install -r requirements.txt
+#   pip install -e submodules/simple-knn
+#   pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+
+mmengine          # config files (arguments/**/*.py) are loaded with mmengine.Config
+gsplat            # rasterizer used by gaussian_renderer
+torchcubicspline  # control-point spline evaluation
+lpips             # perceptual metric in eval.py
+open3d
+imageio
+easydict
+plyfile
+opencv-python
+scipy
+matplotlib
+tqdm
+Pillow
+numpy
