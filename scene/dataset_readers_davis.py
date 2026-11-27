@@ -9,7 +9,7 @@ from the iphone one in three ways:
   * there is no val split -- the train cameras are reused as the "test" set so
     the reporting path stays intact (the PSNR is a training-fit number).
 
-Expects the per-scene layout produced by scripts/prepare_davis.py.
+Expects the per-scene layout produced by preprocess/run.sh.
 """
 
 import os
@@ -54,8 +54,10 @@ def readDavisCameras(path, args):
     # MegaSaM's scale is arbitrary; normalise so the scene sits around unit depth.
     # Depth and camera positions are rescaled together so geometry stays consistent.
     depths_raw = [np.load(os.path.join(depth_dir, f"{i:05d}.npy")).astype(np.float32) for i in frames]
-    mean_depth = float(np.mean(np.stack(depths_raw, 0)))
-    print(f"[DAVIS] {len(frames)} frames, mean depth {mean_depth:.4f} -> normalising to 1.0")
+    norm = getattr(args, "davis_depth_norm", "mean")
+    assert norm in ("mean", "median"), f"davis_depth_norm must be 'mean' or 'median', got {norm!r}"
+    mean_depth = float(np.median(np.stack(depths_raw, 0)) if norm == "median" else np.mean(np.stack(depths_raw, 0)))
+    print(f"[DAVIS] {len(frames)} frames, {norm} depth {mean_depth:.4f} -> normalising to 1.0")
 
     cam_infos = []
     for idx, fid in enumerate(frames):

@@ -914,8 +914,8 @@ def render_test_tto(
     return test_ret
 
 if __name__ == "__main__":
-    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"]="0"
+    # respect the caller's CUDA_VISIBLE_DEVICES (train_iphone.sh sets it); never force a device here
+    os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
     parser = ArgumentParser(description="Training script parameters")
     lp = ModelParams(parser)

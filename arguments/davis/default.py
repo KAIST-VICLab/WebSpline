@@ -1,3 +1,10 @@
+# Shared DAVIS settings; arguments/davis/<scene>.py only sets the frame count.
+# The DAVIS-specific method settings (bundle adjustment, track-curve SPG scaffold,
+# median depth normalisation, SplineGS-style colour decoder, one control point per
+# frame, motion-adaptive control lr, no size cap) are applied automatically when the
+# source directory is detected as DAVIS: see DATASET_DEFAULTS in arguments/__init__.py
+# and DATASET_PRESETS["davis"] in train.py.  Anything set here or in a scene file
+# overrides them.
 ModelHiddenParams = dict(
     kplanes_config = {
      'grid_dimensions': 2,

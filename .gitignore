@@ -16,6 +16,7 @@ data
 extensions
 lab4d
 preprocess
+!/preprocess/
 submodules/forward_full
 *.png
 submodules
@@ -27,3 +28,5 @@ wandb
 SplineGS/
 logs_davis/
 .ipynb_checkpoints
+# local preprocessing paths
+preprocess/env.sh

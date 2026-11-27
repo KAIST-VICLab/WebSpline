@@ -88,8 +88,8 @@ def positive_th_gaussian_decay(x, th, sigma):
     return w
 
 def bundle_adjustment(opt, scene, source_path):
-    # Only datasets with a static track can be bundle-adjusted; DAVIS loads no
-    # static track because its poses come from MegaSaM and are used as given.
+    # Only datasets with a static track can be bundle-adjusted; DAVIS loads one
+    # when davis_static_track is set (the default) and refines the MegaSaM poses.
     if not hasattr(scene, "static_track"):
         raise RuntimeError(
             f"bundle adjustment needs a static track, which the {scene.dataset_type} "

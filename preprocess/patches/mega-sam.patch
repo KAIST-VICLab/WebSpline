@@ -1,0 +1,37 @@
+diff --git a/UniDepth/unidepth/layers/nystrom_attention.py b/UniDepth/unidepth/layers/nystrom_attention.py
+index 9f7476f..c800ba5 100644
+--- a/UniDepth/unidepth/layers/nystrom_attention.py
++++ b/UniDepth/unidepth/layers/nystrom_attention.py
+@@ -4,7 +4,31 @@ import torch
+ import torch.nn as nn
+ import torch.nn.functional as F
+ from einops import rearrange
+-from xformers.components.attention import NystromAttention
++try:
++    from xformers.components.attention import NystromAttention
++except ImportError:
++    # patched: xformers (with .components) is unavailable for torch 2.9/sm_120.
++    # UniDepth calls this with (b, n, h, d) tensors, so xformers' seq_len = k.size(-2)
++    # is num_heads (< num_landmarks) and xformers always takes its dense
++    # scaled-dot-product branch. Reproduce exactly that branch here.
++    import math as _math
++
++    class NystromAttention(nn.Module):
++        def __init__(self, dropout=0.0, num_heads=4, num_landmarks=64, **kwargs):
++            super().__init__()
++            self.num_landmarks = num_landmarks
++            self.attn_drop = nn.Dropout(dropout)
++
++        def forward(self, q, k, v, key_padding_mask=None, *args, **kwargs):
++            assert k.size(-2) <= self.num_landmarks, "landmark branch not ported"
++            att = (q / _math.sqrt(k.size(-1))) @ k.transpose(-2, -1)
++            if key_padding_mask is not None:
++                if key_padding_mask.dtype == torch.bool:
++                    key_padding_mask = torch.zeros_like(key_padding_mask, dtype=q.dtype).masked_fill(~key_padding_mask, float("-inf"))
++                att = att + key_padding_mask
++            att = torch.softmax(att, dim=-1)
++            att = self.attn_drop(att)
++            return att @ v
+ 
+ from .attention import AttentionBlock
+ 

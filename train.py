@@ -192,19 +192,65 @@ DATASET_PRESETS = {
         temporal_diff_shift=[2, 4],
         temporal_diff_weight=[0.6, 0.4],
     ),
+    # DAVIS (casual monocular videos, MegaSaM poses/depth, BootsTAPIR tracks).
+    # Scaffold geometry of MoSca's casual-video profile (profile/demo/demo_fit.yaml),
+    # plus bundle adjustment of the MegaSaM poses on the uniform static tracks.
     "davis": dict(
-        # MegaSaM poses, nothing to bundle-adjust against.
-        run_bundle_adjustment=False,
+        run_bundle_adjustment=True,
         scaffold_spatial_unit=0.02,
-        scaffold_sigma_init_ratio=5.0,
-        scaffold_sigma_max_ratio=10.0,
-        mlevel_list=[1, 7, 15],
-        mlevel_k_list=[16, 8, 8],
-        mlevel_w_list=[0.4, 0.3, 0.3],
-        temporal_diff_shift=[2, 8, 16],
-        temporal_diff_weight=[0.6, 0.4, 0.3],
+        scaffold_sigma_init_ratio=2.0,
+        scaffold_sigma_max_ratio=5.0,
+        mlevel_list=[1],
+        mlevel_k_list=[8],
+        mlevel_w_list=[1.0],
+        temporal_diff_shift=[1, 2, 5, 9],
+        temporal_diff_weight=[0.3, 0.3, 0.2, 0.2],
+        # MoCa stage (keys absent from the other presets fall back to
+        # SCAFFOLD_DEFAULTS, i.e. the values the iPhone/NVIDIA runs use).
+        topo_dist_top_k=1,
+        topo_th_ratio=3.0,
+        mlevel_detach_nn_flag=False,
+        w_corr_maintain_sum_flag=True,
+        geo_steps=4000,
+        geo_decay_start=2000,
+        geo_lambda_xyz_acc=0.1,
+        geo_lambda_q_acc=0.05,
+        geo_lambda_xyz_vel=0.1,
+        geo_lambda_q_vel=0.05,
+        geo_reline_steps=[1001],
+        geo_update_all_topo_steps=[1000],
+        geo_lambda_mask=0.0,         # no SPG mask-consistency term
+        # Nodes come from every dynamic 3D track curve (MoSca get_dynamic_curves,
+        # 2D-track mode) instead of keyframe mask pixels snapped to the nearest track.
+        spg_from_tracks=True,
+        curve_shaking_th=0.15,       # drop curves whose 2nd difference / 2 exceeds 15% of the median depth (= 1)
+        curve_min_valid_cnt=4,
+        curve_max_num=40000,
+        node_resample_factor=0.05,   # dense SPG nodes: resample spacing 0.05 x spatial unit
     ),
 }
+
+# Scaffold / MoCa settings that used to be hard-coded in scene_initialization.
+SCAFFOLD_DEFAULTS = dict(
+    topo_dist_top_k=3,
+    topo_th_ratio=5.0,
+    mlevel_detach_nn_flag=True,
+    w_corr_maintain_sum_flag=False,
+    geo_steps=2000,
+    geo_decay_start=500,
+    geo_lambda_xyz_acc=0.3,
+    geo_lambda_q_acc=0.1,
+    geo_lambda_xyz_vel=0.3,
+    geo_lambda_q_vel=0.1,
+    geo_reline_steps=[],
+    geo_update_all_topo_steps=[],
+    spg_from_tracks=False,
+    curve_shaking_th=0.075,
+    curve_min_valid_cnt=4,
+    curve_max_num=40000,
+    node_resample_factor=1.0,
+    geo_lambda_mask=10.0,
+)
 
 
 def get_dataset_preset(dataset_type):
@@ -220,7 +266,11 @@ def get_dataset_preset(dataset_type):
 
 
 def scene_initialization(opt, scene, source_path):
-    preset = get_dataset_preset(scene.dataset_type)
+    preset = {**SCAFFOLD_DEFAULTS, **get_dataset_preset(getattr(opt, "scaffold_preset", "") or scene.dataset_type)}
+    if getattr(opt, "preset_override", ""):
+        import json as _json
+        preset.update(_json.loads(opt.preset_override))
+        print(f"[*] preset override: {opt.preset_override}", flush=True)
     viewpoint_stack = None
     train_cams = scene.getTrainCameras()
     viewpoint_stack = [i for i in train_cams]  # Large CPU usage
@@ -405,7 +455,9 @@ def scene_initialization(opt, scene, source_path):
         dm_t1hw = dm_thw[:, None]  # [T,1,H,W]
 
         
-        for kf_data in keyframe_dyn_data:
+        # spg_from_tracks (DAVIS preset) builds the curves from the tracks below; skip the pixel->track matching
+        use_track_curves = preset["spg_from_tracks"]
+        for kf_data in ([] if use_track_curves else keyframe_dyn_data):
             k_idx = kf_data['idx']
             dyn_coord_2d = kf_data['coords_2d']
             
@@ -464,19 +516,48 @@ def scene_initialization(opt, scene, source_path):
                 dyn_time_list.append(torch.ones(chunk_len, 1) * kf_data['time'])
                 dyn_mask = torch.cat(dyn_mask_list, dim=0)
                 
-        dyn_tracjectory = torch.cat(dyn_tracjectory, dim=0) # N_pts, N_times, 3
-        dyn_keyframes = torch.cat(dyn_keyframes, dim=0) # N_pts
+        if not use_track_curves:
+            dyn_tracjectory = torch.cat(dyn_tracjectory, dim=0) # N_pts, N_times, 3
+            dyn_keyframes = torch.cat(dyn_keyframes, dim=0) # N_pts
         
-        dyn_color = np.concatenate(dyn_color_list, axis=0)
-        dyn_point = np.concatenate(dyn_point_list, axis=0)
-        dyn_time = torch.cat(dyn_time_list, dim=0)
-        if dyn_tracjectory.shape[0] > args.resample_number:
-            select_inds = random.sample(range(dyn_tracjectory.shape[0]), args.resample_number)
-            dyn_tracjectory = dyn_tracjectory[select_inds]
-            dyn_color = dyn_color[select_inds]
-            dyn_point = dyn_point[select_inds]
-            dyn_time = dyn_time[select_inds]
-            dyn_mask = dyn_mask[select_inds]
+            dyn_color = np.concatenate(dyn_color_list, axis=0)
+            dyn_point = np.concatenate(dyn_point_list, axis=0)
+            dyn_time = torch.cat(dyn_time_list, dim=0)
+            if dyn_tracjectory.shape[0] > args.resample_number:
+                select_inds = random.sample(range(dyn_tracjectory.shape[0]), args.resample_number)
+                dyn_tracjectory = dyn_tracjectory[select_inds]
+                dyn_color = dyn_color[select_inds]
+                dyn_point = dyn_point[select_inds]
+                dyn_time = dyn_time[select_inds]
+                dyn_mask = dyn_mask[select_inds]
+        if use_track_curves:
+            # MoSca get_dynamic_curves (2D-track mode): every dynamic track is a curve,
+            # lifted with depth and line-initialised over its invisible frames, then
+            # o3d outlier slots / shaking curves / short curves are dropped.
+            from lib_mosca.dynamic_solver import slot_o3d_outlier_identifyication, curve_shaking_identification
+            # certainty = raw visibility (MoSca), not visibility inside the dynamic mask
+            c_mask = getattr(scene, "dyn_track_vis_raw", track_visibility).bool().to(device).clone()  # T,N
+            traj_raw = get_valid_3d_points_with_class(viewpoint_stack, tracklet, c_mask)  # lift every visible slot
+            c_xyz = line_segment_init(c_mask, traj_raw).to(device).contiguous()           # T,N,3
+            inl = slot_o3d_outlier_identifyication(c_xyz, c_mask, nb_neighbors=16, std_ratio=5.0).to(device).bool()
+            c_mask = c_mask & inl
+            shake_ok = curve_shaking_identification(c_xyz, preset["curve_shaking_th"])
+            has_shake = (c_mask & ~shake_ok).any(0)
+            c_mask = c_mask & ~has_shake[None]
+            keep = c_mask.sum(0) >= preset["curve_min_valid_cnt"]
+            print(f"[*] SPG from tracks: {N} dynamic tracks, {int(has_shake.sum())} shaking, "
+                  f"{int((~keep).sum())} removed (< {preset['curve_min_valid_cnt']} valid) -> {int(keep.sum())} curves", flush=True)
+            keep_idx = torch.nonzero(keep).squeeze(1)
+            if keep_idx.numel() > preset["curve_max_num"]:
+                keep_idx = keep_idx[torch.randperm(keep_idx.numel(), device=device)[:preset["curve_max_num"]]]
+            c_mask = c_mask[:, keep_idx]
+            c_xyz = line_segment_init(c_mask, traj_raw[:, keep_idx.to(traj_raw.device)].to(device)).contiguous()  # T,N,3
+            dyn_tracjectory = c_xyz.permute(1, 0, 2).contiguous()          # N,T,3
+            dyn_mask = c_mask.permute(1, 0).contiguous()                   # N,T
+            fv = torch.argmax(c_mask.float(), dim=0)                       # first valid frame
+            dyn_point = dyn_tracjectory[torch.arange(len(fv), device=device), fv].detach().cpu().numpy()
+            dyn_color = dyn_color_3d[keep_idx.to(dyn_color_3d.device)].detach().cpu().numpy()
+            dyn_time = all_times[fv].unsqueeze(-1).detach().cpu()
     del points_list
     del colors_list
     del depth_mask_stack_thw
@@ -491,20 +572,22 @@ def scene_initialization(opt, scene, source_path):
         spatial_unit_hard_set=preset["scaffold_spatial_unit"],  # ! SET NEGATIVE IF WANT TO USE AUTO
         sigma_init_ratio=preset["scaffold_sigma_init_ratio"],
         sigma_max_ratio=preset["scaffold_sigma_max_ratio"],
-        topo_dist_top_k=3,
-        topo_th_ratio=5.0,
+        topo_dist_top_k=preset["topo_dist_top_k"],
+        topo_th_ratio=preset["topo_th_ratio"],
         topo_sample_T=100,
         skinning_k=16,
         skinning_method="dqb",
         mlevel_list=preset["mlevel_list"],
         mlevel_k_list=preset["mlevel_k_list"],
         mlevel_w_list=preset["mlevel_w_list"],
-        mlevel_detach_nn_flag=True,  # ! this should be False but due to the old code behavior, set default to True to align with the submission version.
+        mlevel_detach_nn_flag=preset["mlevel_detach_nn_flag"],  # ! this should be False but due to the old code behavior, set default to True to align with the submission version.
         mlevel_detach_self_flag=False,
-        w_corr_maintain_sum_flag=False,
+        w_corr_maintain_sum_flag=preset["w_corr_maintain_sum_flag"],
     )
     scaffold.compute_rotation_from_xyz()
-    sampled_inds = scaffold.resample_node(resample_factor=1.0, use_mask=True)
+    _rf = float(preset.get("node_resample_factor", 1.0))
+    sampled_inds = scaffold.resample_node(resample_factor=_rf, use_mask=True)
+    print(f"[*] scaffold: {dyn_tracjectory.shape[0]} curves -> M={scaffold.M} nodes (unit {scaffold.spatial_unit:.4f})", flush=True)
     node_rgb = torch.from_numpy(dyn_color).float().to('cuda')[sampled_inds]
 
     logging.info(
@@ -514,30 +597,46 @@ def scene_initialization(opt, scene, source_path):
     logging.info("*" * 20 + "MoSca Geo" + "*" * 20)
     # * Optimize the curve with ARAP
     
+    # motion-adaptive lr: per-frame 3D speed of the dynamic curves (median over valid nodes, 5-frame span, median-depth-1 space,
+    # measured on the lifted tracks BEFORE the SPG fit so the SPG lr can use it too). lr = base x (v / v_ref)^pow for the control points,
+    # and the same factor on the SPG init position lr when motion_lr_spg
+    if float(getattr(opt, "motion_lr_vref", 0.0)) > 0:
+        with torch.no_grad():
+            _x = scaffold._node_xyz.float(); _c = scaffold._node_certain.bool(); _k = 5
+            _d = (_x[_k:] - _x[:-_k]).norm(dim=-1) / _k
+            _cs = torch.cat([torch.zeros_like(_c[:1], dtype=torch.long), _c.long().cumsum(0)]); _ok = (_cs[_k + 1:] - _cs[:-_k - 1]) == (_k + 1)   # only points tracked (visible, certain) in every frame of the window
+            _v = float(_d[_ok].median()) if _ok.any() else float(_d.median())
+        _f = (_v / float(opt.motion_lr_vref)) ** float(getattr(opt, "motion_lr_pow", 1.0))
+        opt.control_lr_mult = float(getattr(opt, "motion_lr_base", 0.8)) * _f
+        if getattr(opt, "motion_lr_spg", True):
+            opt.spg_lr_p_mult = float(getattr(opt, "spg_lr_p_mult", 1.0)) * _f
+        print(f"[*] motion_lr: v {_v:.5f} ({int(_ok.sum())} certain windows) / v_ref {float(opt.motion_lr_vref):.5f} ^ {float(getattr(opt, 'motion_lr_pow', 1.0))} = x{_f:.3f} -> control_lr_mult {opt.control_lr_mult:.4f}, spg_lr_p_mult {float(getattr(opt, 'spg_lr_p_mult', 1.0)):.4f}", flush=True)
     scaffold = geometry_scf_init(
         scf=scaffold,
         lr_q=0.03,
-        lr_p=0.03,
+        lr_p=0.03 * float(getattr(opt, "spg_lr_p_mult", 1.0)),  # SPG node position lr (median-depth-1 space)
         lr_sig=0.0,
-        total_steps=2000,
+        total_steps=preset["geo_steps"],
         max_time_window=len(viewpoint_stack) + 1,
         temporal_diff_shift=preset["temporal_diff_shift"],
         temporal_diff_weight=preset["temporal_diff_weight"],
         lambda_local_coord=1.0,
         lambda_metric_len=1.0,
-        lambda_xyz_acc=0.3,
-        lambda_q_acc=0.1,
-        lambda_xyz_vel=0.3,
-        lambda_q_vel=0.1,
+        lambda_xyz_acc=preset["geo_lambda_xyz_acc"],
+        lambda_q_acc=preset["geo_lambda_q_acc"],
+        lambda_xyz_vel=preset["geo_lambda_xyz_vel"],
+        lambda_q_vel=preset["geo_lambda_q_vel"],
         mlevel_resample_steps=100,
         update_full_topo=False,
         use_mask_topo=True,
-        update_all_topo_steps=[],
-        reline_steps=[],
-        decay_start=500,
+        update_all_topo_steps=preset["geo_update_all_topo_steps"],
+        reline_steps=preset["geo_reline_steps"],
+        decay_start=preset["geo_decay_start"],
         decay_factor=30.0,
         viewpoint_stack=viewpoint_stack,
+        lambda_mask_consist=preset.get("geo_lambda_mask", 10),
     )
+
 
     sampled_inds_np = sampled_inds.cpu().numpy()
     final_stat_point = stat_point
@@ -793,16 +892,16 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, render_i
         reg_loss = 0
         if stage == "fine":
             dynamic_l1_loss = l1_loss(image_tensor, gt_image_tensor[:, :3, :, :], mask=motion_mask_tensor)
-            reg_loss += 1.0 * dynamic_l1_loss
+            reg_loss += opt.lambda_dyn_l1_fine * dynamic_l1_loss
 
             mask_loss = mask_dice_loss(d_alpha_tensor, motion_mask_tensor)
-            reg_loss += 2 * mask_loss
+            reg_loss += opt.lambda_mask_fine * mask_loss
 
             depth_loss = l1_loss(depth_tensor, gt_depth_tensor, mask=depth_mask_tensor)
-            reg_loss += 1 * depth_loss
+            reg_loss += opt.lambda_depth_fine * depth_loss
 
             normal_loss = l2_loss(normal_tensor, gt_normal_tensor, mask=depth_mask_tensor)
-            reg_loss += 0.1 * normal_loss
+            reg_loss += opt.lambda_normal_fine * normal_loss
 
             control_arap_coord_loss = torch.zeros((), device=image_tensor.device)
             control_arap_len_loss = torch.zeros((), device=image_tensor.device)
@@ -858,7 +957,7 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, render_i
 
         elif stage == "fine_static":
             depth_loss = l1_loss(depth_tensor, gt_depth_tensor, mask=(1.0 - motion_mask_tensor) * depth_mask_tensor)
-            reg_loss += 0.1 * depth_loss
+            reg_loss += opt.lambda_depth_static * depth_loss
             loss += reg_loss
 
         else:
@@ -953,6 +1052,7 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, render_i
 
                     if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                         stat_gaussians.reset_opacity()
+
     if stage == "fine":
         scene.save(iteration, stage, scaffold=scaffold)
     
@@ -972,9 +1072,18 @@ def training(dataset, hyper, opt, pipe, testing_iterations, render_iterations, s
     scene = Scene(dataset, dyn_gaussians, stat_gaussians, load_coarse=None)  # large CPU usage
     timer.start()
     dyn_gaussians.create_pose_network(hyper, scene.getTrainCameras()) # pose network with instance scaling
-    preset = get_dataset_preset(scene.dataset_type)
+    preset = {**SCAFFOLD_DEFAULTS, **get_dataset_preset(getattr(opt, "scaffold_preset", "") or scene.dataset_type)}
+    if getattr(opt, "preset_override", ""):
+        import json as _json
+        preset.update(_json.loads(opt.preset_override))
     if preset["run_bundle_adjustment"]:
         bundle_adjustment(opt, scene, dataset.source_path)
+        # keep the refined poses so evaluation/rendering uses the same cameras
+        _ds = scene.train_camera.dataset
+        np.savez(os.path.join(args.model_path, "ba_cams.npz"),
+                 R=np.stack([np.asarray(_ds[i].R) for i in range(len(_ds))]),
+                 T=np.stack([np.asarray(_ds[i].T) for i in range(len(_ds))]))
+        print(f"[*] saved BA cameras to {args.model_path}/ba_cams.npz", flush=True)
     else:
         print(f"[*] {scene.dataset_type}: skipping bundle adjustment (poses are used as given)")
     stat_pc, dyn_pc, dyn_tracjectory, scaffold = scene_initialization(opt, scene, dataset.source_path)
@@ -1007,7 +1116,6 @@ def training(dataset, hyper, opt, pipe, testing_iterations, render_iterations, s
     BEST_PSNR, BEST_ITER = scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, render_iterations, saving_iterations,
                             checkpoint_iterations, checkpoint, debug_from,
                             dyn_gaussians, stat_gaussians, scene, "fine", tb_writer, opt.iterations, timer, drop=True, check_seed=check_seed, scaffold=scaffold)
-
 
     return BEST_PSNR, BEST_ITER
 
@@ -1116,6 +1224,11 @@ if __name__ == "__main__":
     parser.add_argument("--configs", type=str, default="")
 
     args = parser.parse_args(sys.argv[1:])
+    # Dataset-type dependent defaults (DAVIS only; iPhone/NVIDIA keep the class
+    # defaults), applied before the config so a config can still override them.
+    from arguments import apply_dataset_defaults
+    from scene import detect_dataset_type
+    args = apply_dataset_defaults(parser, args, detect_dataset_type(args.source_path, args.dataset_type))
     if args.configs:
         import mmengine as mmcv
         from utils.params_utils import merge_hparams

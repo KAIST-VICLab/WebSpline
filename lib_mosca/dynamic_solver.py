@@ -416,6 +416,11 @@ def geometry_scf_init(
         )
     all_penalty_maps = prepare_all_penalty_maps(viewpoint_stack)
     T_frames = all_penalty_maps.shape[0]
+    # Speed: keep the penalty maps and the per-frame cameras on the GPU once,
+    # instead of re-uploading them for every frame of every step (same math).
+    all_penalty_maps = all_penalty_maps.to(scf.device)
+    _cam_R = [torch.from_numpy(v.R).to(scf.device).float() for v in viewpoint_stack]
+    _cam_T = [torch.from_numpy(v.T).to(scf.device).float() for v in viewpoint_stack]
 
     # * The small change is resp. to the init stage
     solid_mask = scf._node_certain
@@ -518,7 +523,7 @@ def geometry_scf_init(
         # Step two frames at a time within the window, for speed
         for t in sup_tids:
             # Fetch the precomputed penalty map, [1, H, W]
-            penalty_map = all_penalty_maps[t].cuda()
+            penalty_map = all_penalty_maps[t]
             if penalty_map.ndim == 2:
                 penalty_map.unsqueeze(0).unsqueeze(0)
             elif penalty_map.ndim == 3:
@@ -527,8 +532,8 @@ def geometry_scf_init(
             node_xyz = scf._node_xyz[t]
             
             # Project 3D -> 2D, in NDC
-            R_wc = torch.from_numpy(view.R).to(scf.device).float()
-            t_cw = torch.from_numpy(view.T).to(scf.device).float()
+            R_wc = _cam_R[t]
+            t_cw = _cam_T[t]
             p_cam = torch.matmul(node_xyz, R_wc) + t_cw
             z = p_cam[:, 2]
             z_safe = torch.clamp(z, min=1e-5)
