@@ -10,6 +10,9 @@ assert imgs == [f"{i:05d}.jpg" for i in range(n)], "images must be 00000.jpg ...
 assert ls("masks", ".png") == [f"{i:05d}.png" for i in range(n)], "masks do not match the frames"
 assert ls("depth", ".npy") == [f"{i:05d}.npy" for i in range(n)], "depth does not match the frames"
 assert len([f for f in ls("pose", ".npy") if f != "intrinsics.npy"]) == n, "pose does not match the frames"
+from PIL import Image
+hw = Image.open(os.path.join(S, "images", imgs[0])).size
+assert Image.open(os.path.join(S, "masks", "00000.png")).size == hw, "masks must have the frame resolution"
 K = np.load(os.path.join(S, "pose", "intrinsics.npy")); assert K.shape == (3, 3)
 d0 = np.load(os.path.join(S, "depth", "00000.npy"))
 for k in ("uniform", "dynamic"):

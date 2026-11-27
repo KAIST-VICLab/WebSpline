@@ -255,6 +255,18 @@ folders. The track files hold `tracks` (T, N, 2, pixels), `visibility`
 tracks, and a track counts as dynamic where it falls inside the mask. The
 loader writes a placeholder `points3D.ply` into the scene directory.
 
+### Getting the DAVIS-2016 scenes
+
+Download DAVIS-2016 (`DAVIS-data.zip`, 480p) from the
+[DAVIS site](https://davischallenge.org/davis2016/code.html) and stage each scene
+with the preprocessing pipeline below (ground-truth masks):
+
+```bash
+for s in $(ls arguments/davis | grep -v default | sed 's/\.py$//'); do
+    preprocess/run.sh --frames DAVIS/JPEGImages/480p/$s --masks DAVIS/Annotations/480p/$s --name $s --gpu 0
+done
+```
+
 ### Training and evaluation
 
 ```bash

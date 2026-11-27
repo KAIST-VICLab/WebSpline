@@ -9,7 +9,7 @@ from the iphone one in three ways:
   * there is no val split -- the train cameras are reused as the "test" set so
     the reporting path stays intact (the PSNR is a training-fit number).
 
-Expects the per-scene layout produced by scripts/prepare_davis.py.
+Expects the per-scene layout produced by preprocess/run.sh.
 """
 
 import os

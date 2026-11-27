@@ -68,7 +68,7 @@ def detect_dataset_type(source_path, override=""):
 
     if exists("emf.json"):
         return "iphone"
-    # DAVIS is staged by scripts/prepare_davis.py, which always writes the
+    # DAVIS scenes are staged by preprocess/run.sh, which always writes the
     # MegaSaM intrinsics next to the per-frame poses.
     if exists("pose", "intrinsics.npy"):
         return "davis"
@@ -124,8 +124,8 @@ class Scene:
         # Track loading differs per dataset in three ways: which tracker produced the
         # npz, how many visible frames a track needs to survive filtering, and whether
         # a static track is needed at all.  Only bundle_adjustment consumes the static
-        # track, and DAVIS does not bundle-adjust (its poses come from MegaSaM), so
-        # there is nothing to load it for.
+        # track; DAVIS loads it (davis_static_track) because the default DAVIS setup
+        # refines the MegaSaM poses with bundle adjustment.
         min_valid_cnt = TRACK_MIN_VALID_CNT.get(dataset_type, 4)
         min_valid_cnt = getattr(args, "tap_loading_min_valid_cnt", min_valid_cnt)
         track_key = TRACK_NPZ_KEY.get(dataset_type, "cotracker")

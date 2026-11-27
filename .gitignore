@@ -28,3 +28,5 @@ wandb
 SplineGS/
 logs_davis/
 .ipynb_checkpoints
+# local preprocessing paths
+preprocess/env.sh

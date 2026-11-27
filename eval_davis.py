@@ -21,8 +21,8 @@ If training ran bundle adjustment (DAVIS default), the refined poses saved next
 to the checkpoint (<model>/ba_cams.npz) are used.
 
     python eval_davis.py -s data/DAVIS/scenes/goat --configs arguments/davis/goat.py \
-        --checkpoint output/davis/goat/point_cloud/iteration_30000 \
-        --out_dir output/davis/goat/eval
+        --checkpoint output/code_release_version/davis/goat/point_cloud/iteration_30000 \
+        --out_dir output/code_release_version/davis/goat/eval
 """
 
 import copy
@@ -41,7 +41,30 @@ from skimage.metrics import structural_similarity
 from arguments import ModelHiddenParams, ModelParams, OptimizationParams, PipelineParams, apply_dataset_defaults
 from gaussian_renderer import render
 from scene import GaussianModel, Scene, detect_dataset_type
-from render_novel_davis import build_local_viewdirs, cam_center
+
+
+def get_pixels(image_size_x, image_size_y, use_center=True):
+    xx, yy = np.meshgrid(np.arange(image_size_x, dtype=np.float32),
+                         np.arange(image_size_y, dtype=np.float32))
+    offset = 0.5 if use_center else 0
+    return np.stack([xx, yy], axis=-1) + offset
+
+
+def build_local_viewdirs(cam):
+    """Camera-space ray directions for every pixel (intrinsics are shared)."""
+    md = cam.metadata
+    pixels = get_pixels(md.image_size_x, md.image_size_y, use_center=True)
+    batch_shape = pixels.shape[:-1]
+    pixels = np.reshape(pixels, (-1, 2))
+    y = (pixels[..., 1] - md.principal_point_y) / md.focal_length
+    x = (pixels[..., 0] - md.principal_point_x) / md.focal_length
+    viewdirs = np.stack([x, y, np.ones_like(x)], axis=-1)
+    return viewdirs / np.linalg.norm(viewdirs, axis=-1, keepdims=True), batch_shape
+
+
+def cam_center(cam):
+    """World-space camera centre. Camera.R is c2w rotation, Camera.T is w2c translation."""
+    return -np.asarray(cam.R) @ np.asarray(cam.T)
 
 
 def write_h264(frames, path, fps):
