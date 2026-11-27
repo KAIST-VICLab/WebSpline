@@ -1,6 +1,7 @@
 _base_ = './default.py'
 
-# 64 frames: keep the temporal plane resolution matched to the sequence length.
+# 64 frames: keep the temporal plane resolution matched to the sequence length
+# (this also sets the number of spline control points: one per frame).
 ModelHiddenParams = dict(
     kplanes_config = {
      'grid_dimensions': 2,

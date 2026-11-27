@@ -114,6 +114,8 @@ class GaussianModel:
         self.active_sh_degree = 0
         temporal_res = args.kplanes_config['resolution'][-1]
         self.control_num = temporal_res // 4 if temporal_res > 12 else temporal_res
+        if getattr(args, 'control_num_override', 0) > 0:
+            self.control_num = min(int(args.control_num_override), temporal_res)
         self.error_threshold = 1.0
         self.current_control_num = torch.tensor(self.control_num, device="cuda").repeat(1)
         self.max_sh_degree = sh_degree
@@ -162,7 +164,7 @@ class GaussianModel:
         self.max_scale = 0.02
         self.min_scale = 0.0
 
-        self.rgbdecoder = getcolormodel(rgbfuntion)
+        self.rgbdecoder = getcolormodel(getattr(args, 'rgb_decoder', '') or rgbfuntion)
 
     def create_pose_network(self, args, train_cams):
         self._posenet = pose_network(args, train_cams=train_cams).to("cuda")
@@ -679,6 +681,7 @@ class GaussianModel:
 
     def training_setup(self, training_args, stage="coarse", is_static=False):
         self.max_scale = float(getattr(training_args, "max_scale", self.max_scale))
+        self.prune_big_world = bool(getattr(training_args, "prune_big_world", True))  # False: MoSca-style, no world-size big-point prune
         self.min_scale = float(getattr(training_args, "min_scale", self.min_scale))
         if self.max_scale < self.min_scale:
             self.max_scale, self.min_scale = self.min_scale, self.max_scale
@@ -697,7 +700,7 @@ class GaussianModel:
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale * static_lr_factor, "name": "xyz"},
-            {'params': [self.control_xyz], 'lr': 30 * training_args.position_lr_init * self.spatial_lr_scale * static_lr_factor, "name": "control_xyz"},
+            {'params': [self.control_xyz], 'lr': float(getattr(training_args, 'control_lr_mult', 30)) * training_args.position_lr_init * self.spatial_lr_scale * static_lr_factor, "name": "control_xyz"},
             {'params': [self.current_control_num], 'lr': 0.0, "name": "current_control_num"},
             {'params': list(self._deformation.get_mlp_parameters()),
             'lr': training_args.deformation_lr_init * self.spatial_lr_scale * static_lr_factor, "name": "deformation"},
@@ -1440,8 +1443,10 @@ class GaussianModel:
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
-            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+            prune_mask = torch.logical_or(prune_mask, big_points_vs)
+            if getattr(self, "prune_big_world", True):
+                big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+                prune_mask = torch.logical_or(prune_mask, big_points_ws)
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()

@@ -130,6 +130,8 @@ class Scene:
         min_valid_cnt = getattr(args, "tap_loading_min_valid_cnt", min_valid_cnt)
         track_key = TRACK_NPZ_KEY.get(dataset_type, "cotracker")
         if dataset_type == "davis":
+            if getattr(args, "davis_static_track", False):  # needed for bundle adjustment on DAVIS
+                self.load_track(args, scene_info, f"*uniform*{track_key}", min_valid_cnt=min_valid_cnt, static=True)
             self.load_track(args, scene_info, f"*{track_key}", min_valid_cnt=min_valid_cnt, static=False)
         else:
             self.load_track(args, scene_info, f"*uniform*{track_key}", min_valid_cnt=min_valid_cnt, static=True)
@@ -260,14 +262,22 @@ class Scene:
                 self.static_track[:, :, 2] = self.static_track[:, :, 2].clone() * self.scale_nw
         else:
             dyn_depth_mask = (depth_masks_tensor >= 0.5) & (static_masks_tensor > 0.5)
+            # Raw visibility (in frame + depth valid, not restricted to the dynamic
+            # mask): MoSca uses this as the curve certainty when building the scaffold.
+            _tt = torch.arange(T)[:, None].expand_as(track_mask)
+            _dv = (depth_masks_tensor >= 0.5)[_tt, track[..., 1].long().clamp(0, H - 1), track[..., 0].long().clamp(0, W - 1)]
+            vis_raw = track_mask.clone() & _dv  # visible AND valid depth (off depth boundaries), as MoSca's s2d.track_mask
             if min_valid_cnt > 0:
-                track, track_mask = filter_track(
+                track, track_mask, keep = filter_track(
                     track,
                     track_mask,
                     dyn_depth_mask.to(track.device),
                     min_valid_cnt=min_valid_cnt,
+                    return_keep=True,
                 )
+                vis_raw = vis_raw[:, keep.to(vis_raw.device)]
             self.dyn_track = track.float()
             self.dyn_track_mask = track_mask
+            self.dyn_track_vis_raw = vis_raw
             if self.dyn_track.shape[-1] == 3 and hasattr(self, "scale_nw"):
                 self.dyn_track[:, :, 2] = self.dyn_track[:, :, 2].clone() * self.scale_nw

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 import copy
 @torch.no_grad()
-def filter_track(track, track_vis, dep_mask_list, min_valid_cnt=4):
+def filter_track(track, track_vis, dep_mask_list, min_valid_cnt=4, return_keep=False):
         # query valid depth and visible mask
     track_dep_mask, _ = gather_track_from_buffer(
         track[..., :2].long(), track_vis, dep_mask_list
@@ -22,6 +22,8 @@ def filter_track(track, track_vis, dep_mask_list, min_valid_cnt=4):
 
     track = track[:, filter_track_mask]
     track_mask = track_mask[:, filter_track_mask].clone()
+    if return_keep:
+        return track, track_mask, filter_track_mask
     return track, track_mask
 
 def gather_track_from_buffer(track, track_base_mask, buffer_list):

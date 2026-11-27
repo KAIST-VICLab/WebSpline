@@ -170,7 +170,23 @@ class RGBDecoderVRayShift(nn.Module):
     
 
 
+class SandwichSGS(nn.Module):
+    """SplineGS-style colour decoder (used for DAVIS): sigmoid(albedo + MLP([spec, time feature, ray origin+direction]))."""
+    def __init__(self, bias=False):
+        super().__init__()
+        self.mlp1 = nn.Conv2d(12, 6, kernel_size=1, bias=bias)
+        self.mlp2 = nn.Conv2d(6, 3, kernel_size=1, bias=bias)
+        self.relu = nn.ReLU()
+
+    def forward(self, input, rays):
+        albedo, spec, timefeature = input.chunk(3, dim=1)
+        specular = self.mlp2(self.relu(self.mlp1(torch.cat([spec, timefeature, rays], dim=1))))
+        return torch.sigmoid(albedo + specular)
+
+
 def getcolormodel(rgbfuntion):
+    if rgbfuntion == "sandwich_sgs":
+        return SandwichSGS()
     if rgbfuntion == "sandwich":
         rgbdecoder = Sandwich()
     
