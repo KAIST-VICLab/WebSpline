@@ -16,6 +16,7 @@ data
 extensions
 lab4d
 preprocess
+!/preprocess/
 submodules/forward_full
 *.png
 submodules

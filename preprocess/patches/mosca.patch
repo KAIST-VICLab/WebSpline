@@ -1,0 +1,89 @@
+diff --git a/lib_mosca/dynamic_gs.py b/lib_mosca/dynamic_gs.py
+index fd400b3..ed20c49 100644
+--- a/lib_mosca/dynamic_gs.py
++++ b/lib_mosca/dynamic_gs.py
+@@ -1,5 +1,5 @@
+ import sys, os, os.path as osp
+-import torch_geometric.nn.pool as pyg_pool
++# torch_geometric/torch_cluster not built for torch 2.9; voxel_grid replaced below
+ import numpy as np
+ import scipy
+ import torch
+@@ -1313,7 +1313,9 @@ def subsample_vtx(vtx, voxel_size):
+     # according to surfelwarp global_config.h line28 d_node_radius=0.025 meter; and warpfieldinitializer.cpp line39 the subsample voxel is 0.7 * 0.025 meter
+     # reference: VoxelSubsamplerSorting.cu line  119
+     # Here use use the mean of each voxel cell
+-    pooling_ind = pyg_pool.voxel_grid(pos=vtx, size=voxel_size)
++    # equivalent of pyg voxel_grid (only cluster identity is used)
++    _vox = torch.floor((vtx - vtx.min(0).values) / voxel_size).long()
++    _, pooling_ind = torch.unique(_vox, dim=0, return_inverse=True)
+     unique_ind, compact_ind = pooling_ind.unique(return_inverse=True)
+     candidate = torch.scatter_reduce(
+         input=torch.zeros(len(unique_ind), 3).to(vtx),
+diff --git a/lib_prior/depth_models/unidepth_wrapper.py b/lib_prior/depth_models/unidepth_wrapper.py
+index 23ef5f0..37e5185 100644
+--- a/lib_prior/depth_models/unidepth_wrapper.py
++++ b/lib_prior/depth_models/unidepth_wrapper.py
+@@ -57,7 +57,7 @@ def get_unidepth_model(device):
+         backbone=backbone,
+         pretrained=True,
+         trust_repo=True,
+-        force_reload=True,
++        force_reload=False,  # avoid concurrent re-download races
+     )
+ 
+     model.to(device)
+diff --git a/lib_render/diff-gaussian-rasterization-alphadep-add3/cuda_rasterizer/rasterizer_impl.h b/lib_render/diff-gaussian-rasterization-alphadep-add3/cuda_rasterizer/rasterizer_impl.h
+index ff2d117..abbcc4c 100644
+--- a/lib_render/diff-gaussian-rasterization-alphadep-add3/cuda_rasterizer/rasterizer_impl.h
++++ b/lib_render/diff-gaussian-rasterization-alphadep-add3/cuda_rasterizer/rasterizer_impl.h
+@@ -10,6 +10,7 @@
+  */
+ 
+ #pragma once
++#include <cstdint> // gcc13
+ 
+ #include <iostream>
+ #include <vector>
+diff --git a/lib_render/diff-gaussian-rasterization-alphadep/cuda_rasterizer/rasterizer_impl.h b/lib_render/diff-gaussian-rasterization-alphadep/cuda_rasterizer/rasterizer_impl.h
+index ff2d117..abbcc4c 100644
+--- a/lib_render/diff-gaussian-rasterization-alphadep/cuda_rasterizer/rasterizer_impl.h
++++ b/lib_render/diff-gaussian-rasterization-alphadep/cuda_rasterizer/rasterizer_impl.h
+@@ -10,6 +10,7 @@
+  */
+ 
+ #pragma once
++#include <cstdint> // gcc13
+ 
+ #include <iostream>
+ #include <vector>
+diff --git a/lib_render/gof-diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h b/lib_render/gof-diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h
+index 647f1a9..5f06220 100644
+--- a/lib_render/gof-diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h
++++ b/lib_render/gof-diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h
+@@ -10,6 +10,7 @@
+  */
+ 
+ #pragma once
++#include <cstdint> // gcc13
+ 
+ #include <iostream>
+ #include <vector>
+diff --git a/viz_utils.py b/viz_utils.py
+index 18ef18c..8df3623 100644
+--- a/viz_utils.py
++++ b/viz_utils.py
+@@ -692,9 +692,10 @@ def viz_single_2d_camera_video(
+         )
+         gray_sph[:, 1:] = gray_sph[:, 1:] * (1.0 - inivisble_red_ratio) + 0.0
+         pad_sph_dim = s_model()[-1].shape[1]
+-        if pad_sph_dim > gray_sph.shape[1]:
+-            gray_sph = F.pad(gray_sph, (0, pad_sph_dim - gray_sph.shape[1], 0, 0))
+-        gs5_cat[-1][~visible_mask] = gray_sph
++        if gray_sph.shape[0] > 0:  # every gaussian visible -> nothing to grey out
++            if pad_sph_dim > gray_sph.shape[1]:
++                gray_sph = F.pad(gray_sph, (0, pad_sph_dim - gray_sph.shape[1], 0, 0))
++            gs5_cat[-1][~visible_mask] = gray_sph
+ 
+         # * draw also the current camera frame in the scene
+         add_mu = cams.trans_pts_to_world(working_t, camera_mu)
